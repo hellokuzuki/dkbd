@@ -12,7 +12,7 @@ ADD  [ "files/mosquitto.tar.gz", "/" ]
     # protocol websockets -> protocol 
     # http_dir /usr/share/mqtt-admin -> mqtt-admin derectory
 ADD  [ "files/websockets.conf", "/etc/mosquitto/conf.d/" ]
-# expose port
-EXPOSE 9001
+# port has been opened by sourceperl image
+#EXPOSE 9001
 # change user
 USER mosquitto
