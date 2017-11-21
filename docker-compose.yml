@@ -1,0 +1,136 @@
+version: "3"
+
+volumes:
+    lora_redis:
+    lora_postgres:
+
+services:
+
+################################################
+# Gateway Bridge 
+###############################################
+  mosquitto:
+    build: ./mosquitto
+    image: mosquitto:1.4.12
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${MQTT_EXT_PORT}:${MQTT_PORT}
+    - ${PRIVATE_IP}:${MQTT_ADMIN_EXT_PORT}:${MQTT_ADMIN_PORT}
+
+#  mosquitto_p:
+#    build: ./mosquitto
+#    image: mosquitto:1.4.12
+#    restart: unless-stopped
+#    ports:
+#    - ${PRIVATE_IP}:${MQTT_EXT_PORT_P}:${MQTT_PORT}
+#    - ${PRIVATE_IP}:${MQTT_ADMIN_EXT_PORT_P}:${MQTT_ADMIN_PORT}
+
+  gateway-bridge:
+    build: ./lora-gateway-bridge
+    image: lora-gateway-bridge:${GW_VER}
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${GW_EXT_PORT}:${GW_PORT}/udp
+    environment:
+    - MQTT_SERVER=tcp://mosquitto:${MQTT_PORT}
+    links:
+    - mosquitto
+
+#################################################
+# LoraAppServer
+#################################################
+  lora_postgre_as:
+    image: postgres:9.6-alpine
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${LORA_POSTGRES_AS_EXT_PORT}:${LORA_POSTGRES_PORT}
+    environment:
+    - POSTGRES_PASSWORD=loraserver_as
+    - POSTGRES_USER=loraserver_as
+    - POSTGRES_DB=loraserver_as
+
+  appserver:
+    build: ./lora-app-server
+    image: lora-app-server:${AS_VER}
+    ports:
+    - ${PRIVATE_IP}:${AS_EXT_PORT}:${AS_PORT}
+    environment:
+    - DB_AUTOMIGRATE=true
+    - POSTGRES_DSN=postgres://loraserver_as:loraserver_as@lora_postgre_as/loraserver_as?sslmode=disable
+    - REDIS_URL=redis://lora_redis:${REDIS_PORT}
+    - MQTT_SERVER=tcp://mosquitto:${MQTT_PORT}
+    - NS_SERVER=loraserver:${NS_PORT}
+    - JWT_SECRET=verysecret
+    - HTTP_TLS_CERT=/etc/lora-app-server/certs/http.pem
+    - HTTP_TLS_KEY=/etc/lora-app-server/certs/http-key.pem
+    - AS_PUBLIC_SERVER=appserver:8001
+    links:
+    - mosquitto
+    - lora_redis
+    - lora_postgre_as
+
+  lora_postgres_adminer:
+    image: adminer
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${LORA_POSTGRES_ADMINER_EXT_PORT}:${LORA_POSTGRES_ADMINER_PORT}
+    links:
+    - lora_postgre_as
+    - lora_postgre_ns
+
+#################################################
+# LoraServer
+#################################################
+  lora_redis:
+    image: redis:4-alpine
+    restart: unless-stopped
+    command: --appendonly yes
+    volumes:
+    - lora_redis:/data
+
+  lora_redis_admin:
+    build: ./redis-commander
+    image: redis_commander:latest
+    restart: unless-stopped
+    command: --redis-host redis --save
+    links:
+    - lora_redis:redis
+    ports:
+    - ${PRIVATE_IP}:${LORA_REDIS_ADMIN_EXT_PORT}:${LORA_REDIS_ADMIN_PORT}
+
+  lora_postgre_ns:
+    image: postgres:9.6-alpine
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${LORA_POSTGRES_NS_EXT_PORT}:${LORA_POSTGRES_PORT}
+    environment:
+    - POSTGRES_PASSWORD=loraserver_ns
+    - POSTGRES_USER=loraserver_ns
+    - POSTGRES_DB=loraserver_ns
+
+  lora_pgadmin:
+    image: thajeztah/pgadmin4
+    restart: unless-stopped
+    ports:
+    - ${PRIVATE_IP}:${LORA_PGADMIN_EXT_PORT}:${LORA_PGADMIN_PORT}
+
+  loraserver:
+    build: ./loraserver
+    image: loraserver:${NS_VER}
+    restart: unless-stopped
+    environment:
+    - DB_AUTOMIGRATE=true
+    - LOG_NODE_FRAMES=true
+    - NET_ID=${LORA_NET_ID}
+    - BAND=${LORA_BAND}
+    - REDIS_URL=redis://redis:${REDIS_PORT}
+    - GW_MQTT_SERVER=tcp://mosquitto:${MQTT_PORT}
+    - GW_SERVER_JWT_SECRET=verysecret
+    - POSTGRES_DSN=postgres://loraserver_ns:loraserver_ns@lora_postgre_ns/loraserver_ns?sslmode=disable
+    - JS_SERVER=http://appserver:8003
+    ports:
+    - ${PRIVATE_IP}:${NS_SERVER_EXT_PORT}:${NS_SERVER_PORT}
+    links:
+    - lora_redis:redis
+    - lora_postgre_ns
+    - mosquitto
